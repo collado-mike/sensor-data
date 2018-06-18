@@ -1,5 +1,13 @@
 package org.me.sensor.io.file;
 
+import org.me.sensor.io.device.SensorDataFileFormat;
+
+import java.io.*;
+import java.nio.charset.Charset;
+import java.util.Comparator;
+import java.util.SortedSet;
+import java.util.TreeSet;
+
 /**
  * FileFormat that is built for querying. This file format actually generates two files for a given batch of sensor data.
  *
@@ -29,10 +37,107 @@ package org.me.sensor.io.file;
  *
  * The file sorted by values can be merge-sorted, but the timestamp offsets will need to be re-written to be an offset
  * of the base timestamp that ends up in the final file (it doesn't really matter which timestamp it is, but the
- * earliest base timestamp is a reasonable choice).  
+ * earliest base timestamp is a reasonable choice).
+ *
+ * The write is {@link Closeable}, so data will not be flushed until the {@link #close()} method is called. In
+ * particular, the value sorted file will not contain any data until the data is flushed during the {@link #close()}
+ * process.
  *
  *
  */
-public class QueryFileFormat {
+public class QueryFileFormat<T extends Number & Comparable> implements Closeable {
+    /**
+     * We version our files because, well...
+     */
+    private static final byte VERSION = 1;
 
+    /**
+     * Header bytes for the two files we'll generate.
+     */
+    private static final byte[] TIMESORTED_MAGIC = {(byte)0xFE, (byte)0xED, (byte)0x0A, VERSION};
+    private static final byte[] VALUESORTED_MAGIC = {(byte)0xFE, (byte)0xED, (byte)0x0B, VERSION};
+    
+    private final File outputDirectory;
+    private final DataOutputStream timeSortedOut;
+    private final DataOutputStream valueSortedOut;
+    private final SortedSet<SensorDataFileFormat.SensorData> values;
+
+    private long baseTimestamp;
+    private int timestampRate;
+    private SensorDataFileFormat.SensorData lastSeen;
+    private short runLengthCounter = 0;
+
+    /**
+     * @param outputDirectory The directory where all files will be generated.
+     * @param sensorId The sensor for which this data is written. All data should be for the same sensor.
+     * @param fileSuffix The file suffix, including any numeric suffix, in case this writer is one of many chunks.
+     *                   Including a suffix allows each chunk to write a separate file that can be merge-sorted later on.
+     * @throws IOException
+     */
+    public QueryFileFormat(File outputDirectory, String sensorId, String fileSuffix) throws IOException {
+        if (!outputDirectory.exists()) {
+            throw new IllegalArgumentException("Unable to write data to " + outputDirectory
+                    + " because it does not exist");
+        }
+        this.outputDirectory = outputDirectory;
+        timeSortedOut = new DataOutputStream(new FileOutputStream(new File(outputDirectory, "timesorted" + fileSuffix)));
+        valueSortedOut = new DataOutputStream(new FileOutputStream(new File(outputDirectory, "valuesorted" + fileSuffix)));
+
+        timeSortedOut.write(TIMESORTED_MAGIC);
+        timeSortedOut.write(sensorId.getBytes(Charset.forName("US-ASCII")));
+
+        valueSortedOut.write(VALUESORTED_MAGIC);
+        valueSortedOut.write(sensorId.getBytes(Charset.forName("US-ASCII")));
+        values = new TreeSet<>((a,b) -> Comparator.<T>naturalOrder().compare((T)a.getValue(), (T)b.getValue()));
+    }
+
+    /**
+     * Add a value to the files.
+     * @param data
+     * @throws IOException
+     */
+    public void add(SensorDataFileFormat.SensorData data) throws IOException {
+        if (baseTimestamp == 0) {
+            baseTimestamp = data.getTimestamp();
+            timeSortedOut.writeLong(baseTimestamp);
+            valueSortedOut.writeLong(baseTimestamp);
+        } else if (timestampRate == 0) {
+            timestampRate = (int)(1000/(data.getTimestamp() - baseTimestamp));
+            timeSortedOut.writeInt(timestampRate);
+        }
+        values.add(data);
+        if (lastSeen != null && !lastSeen.equals(data.getValue())) {
+            flushRle();
+            lastSeen = data;
+        } else {
+            lastSeen = data;
+            runLengthCounter++;
+        }
+    }
+
+    private void flushRle() throws IOException {
+        timeSortedOut.writeShort(runLengthCounter);
+        lastSeen.getType().writeValue(timeSortedOut, lastSeen.getValue());
+        runLengthCounter = 0;
+    }
+
+    private void flushSorted() throws IOException {
+        for (SensorDataFileFormat.SensorData value : values) {
+            valueSortedOut.writeInt((int)(value.getTimestamp() - baseTimestamp));
+            value.getType().writeValue(valueSortedOut, value.getValue());
+        }
+    }
+
+    public void close() throws IOException {
+        try {
+            flushRle();
+            flushSorted();
+        } finally {
+            try {
+                timeSortedOut.close();
+            } finally {
+                valueSortedOut.close();
+            }
+        }
+    }
 }

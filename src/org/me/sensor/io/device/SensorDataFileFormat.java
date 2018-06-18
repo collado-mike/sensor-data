@@ -23,7 +23,7 @@ import java.util.*;
  * <li>1-byte prefix, which conforms to the {@link PREFIX} enum. This indicates the type of numeric data
  * (integer or floating point)</li>
  * <li>1-byte sensor id, which references the values in the map in the header</li>
- * <li>8-byte timestamp- the time of the event in epoch seconds</li>
+ * <li>8-byte timestamp- the time of the event in epoch milliseconds</li>
  * <li>8-byte value - the actual sensor value</li>
  * </ol>
  * <p>
@@ -52,7 +52,7 @@ public final class SensorDataFileFormat {
      */
     private static final byte[] HEADER = {(byte) 0xFE, (byte) 0xED, VERSION};
 
-    private enum PREFIX {
+    public enum PREFIX {
         LONG(1),
         DOUBLE(2);
 
@@ -62,10 +62,21 @@ public final class SensorDataFileFormat {
             this.prefix = (byte) prefix;
         }
 
-        void write(DataOutputStream out) throws IOException {
+        public void write(DataOutputStream out) throws IOException {
             out.write(prefix);
         }
 
+        public void writeValue(DataOutputStream out, Number value) throws IOException {
+            switch (this) {
+                case LONG:
+                    out.writeLong(value.longValue());
+                case DOUBLE:
+                    out.writeDouble(value.doubleValue());
+                default:
+                    throw new IllegalStateException("There are only two values for this enum.");
+            }
+        }
+        
         Number read(DataInputStream in) throws IOException {
             switch (this) {
                 case LONG:
@@ -96,11 +107,13 @@ public final class SensorDataFileFormat {
         private final String sensor;
         private final long timestamp;
         private final Number value;
+        private final PREFIX type;
 
-        public SensorData(String sensor, long timestamp, Number value) {
+        public SensorData(String sensor, long timestamp, Number value, PREFIX type) {
             this.sensor = sensor;
             this.timestamp = timestamp;
             this.value = value;
+            this.type = type;
         }
 
         public String getSensor() {
@@ -113,6 +126,10 @@ public final class SensorDataFileFormat {
 
         public Number getValue() {
             return value;
+        }
+
+        public PREFIX getType() {
+            return type;
         }
     }
 
@@ -204,7 +221,7 @@ public final class SensorDataFileFormat {
         }
     }
 
-    public static final class Reader implements Closeable, Iterable {
+    public static final class Reader implements Closeable, Iterable<SensorData> {
         private final DataInputStream in;
         private final Map<Byte, String> sensorIdMap = new HashMap<>();
 
@@ -243,7 +260,7 @@ public final class SensorDataFileFormat {
             String sensor = sensorIdMap.get(in.readByte());
             long timestamp = in.readLong();
             Number value = prefix.read(in);
-            return new SensorData(sensor, timestamp, value);
+            return new SensorData(sensor, timestamp, value, prefix);
         }
 
         @Override
