@@ -275,15 +275,17 @@ public final class SensorDataFileFormat {
 
         public SensorData readNext() throws IOException {
             // try to read the next byte. If there's no byte, we've run out of records.
-            byte b = in.readByte();
-            if (b <= 0) {
+            try {
+                byte b = in.readByte();
+                PREFIX prefix = PREFIX.forByte(b);
+                String sensor = sensorIdMap.get(in.readByte());
+                long timestamp = in.readLong();
+                Number value = prefix.read(in);
+                return new SensorData(sensor, timestamp, value, prefix);
+            } catch (EOFException e) {
+                // we've reached the end. Nothing to fear.
                 return null;
             }
-            PREFIX prefix = PREFIX.forByte(b);
-            String sensor = sensorIdMap.get(in.readByte());
-            long timestamp = in.readLong();
-            Number value = prefix.read(in);
-            return new SensorData(sensor, timestamp, value, prefix);
         }
 
         @Override
