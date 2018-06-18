@@ -159,7 +159,8 @@ public final class SensorDataFileFormat {
     }
 
     /**
-     * Writes a file that conforms to the specification in the {@link SensorDataFileFormat} class docs.
+     * Writes a file that conforms to the specification in the {@link SensorDataFileFormat} class docs. This class
+     * is immutable, so its thread safety is dictated by its underlying {@link OutputStream}.
      */
     public static final class Writer implements Closeable {
         private final DataOutputStream out;
@@ -221,9 +222,14 @@ public final class SensorDataFileFormat {
         }
     }
 
+    /**
+     * Reader for the {@link SensorDataFileFormat}. This reader is immutable, so its thread safety is dicated by the
+     * underlying {@link InputStream}.
+     */
     public static final class Reader implements Closeable, Iterable<SensorData> {
         private final DataInputStream in;
         private final Map<Byte, String> sensorIdMap = new HashMap<>();
+        private final int headerBytes;
 
         public Reader(InputStream in) throws IOException {
             this.in = new DataInputStream(in);
@@ -233,9 +239,9 @@ public final class SensorDataFileFormat {
                 throw new IllegalArgumentException("The supplied input stream does not point to a valid sensor data file. " +
                         "Expected header bytes " + Arrays.toString(HEADER) + " but found " + Arrays.toString(header));
             }
-
             StringBuilder builder = new StringBuilder();
             char lastRead = (char) this.in.readByte();
+            int headerBytesRead = 4;
             Byte id;
             while (lastRead != '\n') {
                 if (lastRead == ',') {
@@ -247,7 +253,24 @@ public final class SensorDataFileFormat {
                 }
                 builder.append(lastRead);
                 lastRead = (char) this.in.readByte();
+                headerBytesRead++;
             }
+            this.headerBytes = headerBytesRead;
+        }
+
+        /**
+         * Method to skip to a specified chunk. The length of the entire stream must be known to skip to a specified
+         * chunk. Chunk indexes are 0-based, so chunk 0 is the first chunk.
+         * @param chunk
+         * @param totalChunks
+         * @param streamLength
+         * @throws IOException
+         */
+        public void skipTo(int chunk, int totalChunks, long streamLength) throws IOException {
+            long dataSize = streamLength - headerBytes;
+
+            long startPos = chunk * (dataSize / totalChunks);
+            in.skipBytes((int) startPos);
         }
 
         public SensorData readNext() throws IOException {

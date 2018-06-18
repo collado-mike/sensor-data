@@ -43,6 +43,9 @@ import java.util.TreeSet;
  * particular, the value sorted file will not contain any data until the data is flushed during the {@link #close()}
  * process.
  *
+ * This class is definitively NOT thread safe. This class should be isolated to within a single thread, as its state
+ * may be non-deterministic if accessed by multiple threads.
+ *
  *
  */
 public class QueryFileFormat<T extends Number & Comparable> implements Closeable {
